@@ -1,6 +1,6 @@
-// Package watcher is used to thinly wrap fs.notify watcher in order to add the ability to query if something has
+// Package fileWatcher is used to thinly wrap fs.notify watcher in order to add the ability to query if something has
 // been watched yet or not.
-package main
+package fileWatcher
 
 import (
 	"fmt"
