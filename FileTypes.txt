@@ -1,0 +1,13 @@
+Types of files:
+
+1. Standard file
+    Standard sync priority that adjusts based on frequency of change. More frequently modified files are put at the top of the sync queue.
+2. Archive file - not expected to change
+    Lowest sync priority. Only periodicaly checks files for changes. Expected to not change. If it changes an alert is sent to the user.
+3. Low-latency file
+    Put as the highest sync priority. Uses FS notify under the covers to receive change events. Changes are propagated as soon as possible.
+    Low latency files are expected to change at any location in the file.
+4. Streaming file
+    Is a file that only exists as a streamed file while data is streaming to or from it. Once streaming stops, it reverts to a standard file.
+    Streaming files are only watched for changes at the end of the file. If the file changes in the beginning of the file, it won't pick up that change until
+    it reverts to a normal file, and the changes are detected.

@@ -3,24 +3,25 @@
 package fileWatcher
 
 import (
-	"fmt"
-	"github.com/fsnotify/fsnotify"
-	cmap "github.com/orcaman/concurrent-map/v2"
-	"github.com/spf13/afero"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
+
+	"github.com/fsnotify/fsnotify"
+	cmap "github.com/orcaman/concurrent-map/v2"
+	"github.com/spf13/afero"
 )
 
 type Logger interface {
-	Panic(args ...interface{})
-	Error(args ...interface{})
-	Warn(args ...interface{})
-	Info(args ...interface{})
-	Debug(args ...interface{})
-	Trace(args ...interface{})
-	Print(args ...interface{})
+	Panic(args ...any)
+	Error(args ...any)
+	Warn(args ...any)
+	Info(args ...any)
+	Debug(args ...any)
+	Trace(args ...any)
+	Print(args ...any)
 }
 
 var log Logger
@@ -35,11 +36,51 @@ func SetFs(newFs afero.Fs) {
 	fs = newFs
 }
 
+// FileType represents the classification of a watched file.
+type FileType int
+
+const (
+	// Standard is a file with standard sync priority.
+	Standard FileType = iota
+	// Archive is a file that is not expected to change and has lowest sync priority.
+	Archive
+	// LowLatency is a file that needs high sync priority and uses fsnotify.
+	LowLatency
+	// Streaming is a file that is only watched at the end while data is streaming.
+	Streaming
+)
+
+func (t FileType) String() string {
+	switch t {
+	case Standard:
+		return "Standard"
+	case Archive:
+		return "Archive"
+	case LowLatency:
+		return "LowLatency"
+	case Streaming:
+		return "Streaming"
+	default:
+		return "Unknown"
+	}
+}
+
+// FileChangeCallback is a function that can be registered to receive file change events.
+type FileChangeCallback func(event FileWatcherEvent)
+
 type FileWatcher struct {
-	Watcher    *fsnotify.Watcher
-	WatchedMap cmap.ConcurrentMap[string, string]
-	Events     chan FileWatcherEvent
-	Errors     chan error
+	Watcher              *fsnotify.Watcher
+	StandardWatchesMap   cmap.ConcurrentMap[string, FileType]
+	ArchiveWatchesMap    cmap.ConcurrentMap[string, FileType]
+	LowLatencyWatchesMap cmap.ConcurrentMap[string, FileType]
+	StreamingWatchesMap  cmap.ConcurrentMap[string, FileType]
+	Events               chan FileWatcherEvent
+	Errors               chan error
+	onStandardCallback   FileChangeCallback
+	onArchiveCallback    FileChangeCallback
+	onLowLatencyCallback FileChangeCallback
+	onStreamingCallback  FileChangeCallback
+	mu                   sync.RWMutex
 }
 
 type FileWatcherEvent struct {
@@ -115,8 +156,6 @@ func (e FileWatcherEvent) IsChModEvent() bool {
 func Init(done chan bool, newFs afero.Fs, l Logger) (*FileWatcher, error) {
 	SetLogger(l)
 	SetFs(newFs)
-	// concurrent map: https://github.com/orcaman/concurrent-map
-	wMap := cmap.New[string]()
 	fsWatcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		return nil, err
@@ -124,7 +163,10 @@ func Init(done chan bool, newFs afero.Fs, l Logger) (*FileWatcher, error) {
 
 	res := FileWatcher{}
 	res.Watcher = fsWatcher
-	res.WatchedMap = wMap
+	res.StandardWatchesMap = cmap.New[FileType]()
+	res.ArchiveWatchesMap = cmap.New[FileType]()
+	res.LowLatencyWatchesMap = cmap.New[FileType]()
+	res.StreamingWatchesMap = cmap.New[FileType]()
 	res.Errors = make(chan error)
 	res.Events = make(chan FileWatcherEvent)
 
@@ -179,7 +221,7 @@ func (w *FileWatcher) watchFileChangeEvents(done chan bool) {
 				// send chmod events along down the chain right away
 				e.Event = e.ChModEvent()
 				e.Path = event.Name
-				w.Events <- e
+				w.sendEvent(e)
 				break
 			}
 
@@ -203,19 +245,19 @@ func (w *FileWatcher) watchFileChangeEvents(done chan bool) {
 				e.Event = e.RenameFolderEvent()
 				e.Path = eventsList[1].Name
 				e.PreviousPath = eventsList[0].Name
-				w.Events <- e
+				w.sendEvent(e)
 				resetStack(eventsList)
 			} else if renameFile {
 				e.Event = e.RenameFileEvent()
 				e.Path = eventsList[1].Name
 				e.PreviousPath = eventsList[0].Name
-				w.Events <- e
+				w.sendEvent(e)
 				resetStack(eventsList)
 			} else if editFile {
 				e.Event = e.EditFileEvent()
 				e.Path = eventsList[0].Name
 				e.PreviousPath = ""
-				w.Events <- e
+				w.sendEvent(e)
 				resetStack(eventsList)
 			} else if rapidDelete {
 				if eventsList[0].Name == eventsList[1].Name {
@@ -229,13 +271,13 @@ func (w *FileWatcher) watchFileChangeEvents(done chan bool) {
 				e.Event = e.DeleteFolderEvent()
 				e.Path = eventsList[0].Name
 				e.PreviousPath = ""
-				w.Events <- e
+				w.sendEvent(e)
 				resetStack(eventsList)
 			} else if deleteFile {
 				e.Event = e.DeleteFileEvent()
 				e.Path = eventsList[0].Name
 				e.PreviousPath = ""
-				w.Events <- e
+				w.sendEvent(e)
 				resetStack(eventsList)
 			} else if eventsList[0].Has(fsnotify.Create) {
 				onlyCreateEvent = true
@@ -262,7 +304,7 @@ func (w *FileWatcher) watchFileChangeEvents(done chan bool) {
 				e.Path = eventsList[0].Name
 				e.PreviousPath = ""
 				resetStack(eventsList)
-				w.Events <- e
+				w.sendEvent(e)
 				onlyCreateEvent = false
 			}
 		case err := <-w.Watcher.Errors:
@@ -270,7 +312,7 @@ func (w *FileWatcher) watchFileChangeEvents(done chan bool) {
 		case <-done:
 			err := w.Close()
 			if err != nil {
-				_ = fmt.Errorf(err.Error())
+				log.Error(err)
 			}
 			return
 		}
@@ -285,9 +327,103 @@ func eventDelay(channel chan bool) {
 	channel <- true
 }
 
-func (w *FileWatcher) Add(path string) error {
-	_, alreadyWatching := w.WatchedMap.Get(path)
-	if !alreadyWatching {
+// RegisterStandardCallback sets the callback for Standard file type events.
+func (w *FileWatcher) RegisterStandardCallback(cb FileChangeCallback) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.onStandardCallback = cb
+}
+
+// RegisterArchiveCallback sets the callback for Archive file type events.
+func (w *FileWatcher) RegisterArchiveCallback(cb FileChangeCallback) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.onArchiveCallback = cb
+}
+
+// RegisterLowLatencyCallback sets the callback for LowLatency file type events.
+func (w *FileWatcher) RegisterLowLatencyCallback(cb FileChangeCallback) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.onLowLatencyCallback = cb
+}
+
+// RegisterStreamingCallback sets the callback for Streaming file type events.
+func (w *FileWatcher) RegisterStreamingCallback(cb FileChangeCallback) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.onStreamingCallback = cb
+}
+
+func (w *FileWatcher) sendEvent(e FileWatcherEvent) {
+	w.Events <- e
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+
+	// Identify the path to look up the file type.
+	// For renames, the type was associated with the previous path.
+	lookupPath := e.Path
+	if e.PreviousPath != "" {
+		lookupPath = e.PreviousPath
+	}
+
+	if t, ok := w.getFileType(lookupPath); ok {
+		// Type-specific callback
+		var cb FileChangeCallback
+		switch t {
+		case Standard:
+			cb = w.onStandardCallback
+		case Archive:
+			cb = w.onArchiveCallback
+		case LowLatency:
+			cb = w.onLowLatencyCallback
+		case Streaming:
+			cb = w.onStreamingCallback
+		}
+
+		if cb != nil {
+			cb(e)
+		}
+
+		// Update maps to maintain tracking accuracy.
+		if e.IsRenameFileEvent() || e.IsRenameFolderEvent() {
+			w.removeFromMap(e.PreviousPath, t)
+			w.addToMap(e.Path, t)
+		} else if e.IsDeleteFileEvent() || e.IsDeleteFolderEvent() {
+			w.removeFromMap(e.Path, t)
+		}
+	}
+}
+
+// AddStandardFile starts watching a file or directory as a Standard file type.
+func (w *FileWatcher) AddStandardFile(path string) error {
+	return w.addWithType(path, Standard)
+}
+
+// AddArchiveFile starts watching a file or directory as an Archive file type.
+func (w *FileWatcher) AddArchiveFile(path string) error {
+	return w.addWithType(path, Archive)
+}
+
+// AddLowLatencyFile starts watching a file or directory as a LowLatency file type.
+func (w *FileWatcher) AddLowLatencyFile(path string) error {
+	return w.addWithType(path, LowLatency)
+}
+
+// AddStreamingFile starts watching a file or directory as a Streaming file type.
+func (w *FileWatcher) AddStreamingFile(path string) error {
+	return w.addWithType(path, Streaming)
+}
+
+// ConvertToFileType updates the tracked file type for a given path.
+func (w *FileWatcher) ConvertToFileType(path string, newType FileType) error {
+	w.removeFromAllMaps(path)
+	w.addToMap(path, newType)
+	return nil
+}
+
+func (w *FileWatcher) addWithType(path string, fileType FileType) error {
+	if !w.Contains(path) {
 		fileInfo, err := os.Stat(path)
 
 		if os.IsNotExist(err) {
@@ -296,16 +432,14 @@ func (w *FileWatcher) Add(path string) error {
 
 		if fileInfo.IsDir() {
 			// watch the directory
-			w.WatchedMap.Set(path, path)
+			w.addToMap(path, fileType)
 			return w.Watcher.Add(path)
 		} else {
 			// check if we are already watching the directory the file is in
 			directory := filepath.Dir(path)
-			_, watchingContainingDir := w.WatchedMap.Get(directory)
-
-			if !watchingContainingDir {
+			if !w.Contains(directory) {
 				// not watching the directory the file is in, watch the file itself.
-				w.WatchedMap.Set(path, path)
+				w.addToMap(path, fileType)
 				return w.Watcher.Add(path)
 			}
 		}
@@ -313,23 +447,98 @@ func (w *FileWatcher) Add(path string) error {
 	return nil
 }
 
+func (w *FileWatcher) Add(path string) error {
+	return w.AddStandardFile(path)
+}
+
 func (w *FileWatcher) Remove(path string) error {
-	_, ok := w.WatchedMap.Get(path)
-	if ok {
+	if w.Contains(path) {
 		err := w.Watcher.Remove(path)
 
 		if err != nil {
 			return err
 		}
 
-		w.WatchedMap.Remove(path)
+		w.removeFromAllMaps(path)
 	}
 	return nil
 }
 
+func (w *FileWatcher) GetFileType(path string) (FileType, bool) {
+	return w.getFileType(path)
+}
+
+func (w *FileWatcher) getFileType(path string) (FileType, bool) {
+	current := path
+	for {
+		if _, ok := w.StandardWatchesMap.Get(current); ok {
+			return Standard, true
+		}
+		if _, ok := w.ArchiveWatchesMap.Get(current); ok {
+			return Archive, true
+		}
+		if _, ok := w.LowLatencyWatchesMap.Get(current); ok {
+			return LowLatency, true
+		}
+		if _, ok := w.StreamingWatchesMap.Get(current); ok {
+			return Streaming, true
+		}
+		parent := filepath.Dir(current)
+		if parent == current || parent == "" {
+			break
+		}
+		current = parent
+	}
+	return 0, false
+}
+
 func (w *FileWatcher) Contains(path string) bool {
-	_, ok := w.WatchedMap.Get(path)
-	return ok
+	if _, ok := w.StandardWatchesMap.Get(path); ok {
+		return true
+	}
+	if _, ok := w.ArchiveWatchesMap.Get(path); ok {
+		return true
+	}
+	if _, ok := w.LowLatencyWatchesMap.Get(path); ok {
+		return true
+	}
+	if _, ok := w.StreamingWatchesMap.Get(path); ok {
+		return true
+	}
+	return false
+}
+
+func (w *FileWatcher) addToMap(path string, t FileType) {
+	switch t {
+	case Standard:
+		w.StandardWatchesMap.Set(path, t)
+	case Archive:
+		w.ArchiveWatchesMap.Set(path, t)
+	case LowLatency:
+		w.LowLatencyWatchesMap.Set(path, t)
+	case Streaming:
+		w.StreamingWatchesMap.Set(path, t)
+	}
+}
+
+func (w *FileWatcher) removeFromMap(path string, t FileType) {
+	switch t {
+	case Standard:
+		w.StandardWatchesMap.Remove(path)
+	case Archive:
+		w.ArchiveWatchesMap.Remove(path)
+	case LowLatency:
+		w.LowLatencyWatchesMap.Remove(path)
+	case Streaming:
+		w.StreamingWatchesMap.Remove(path)
+	}
+}
+
+func (w *FileWatcher) removeFromAllMaps(path string) {
+	w.StandardWatchesMap.Remove(path)
+	w.ArchiveWatchesMap.Remove(path)
+	w.LowLatencyWatchesMap.Remove(path)
+	w.StreamingWatchesMap.Remove(path)
 }
 
 func (w *FileWatcher) Close() error {
