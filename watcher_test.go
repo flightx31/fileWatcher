@@ -2,6 +2,7 @@ package fileWatcher
 
 import (
 	"testing"
+	"time"
 	"github.com/spf13/afero"
 )
 
@@ -153,5 +154,53 @@ func TestFileWatcher_CurrentDirCallbackRouting(t *testing.T) {
 
 	if !standardCalled {
 		t.Error("Standard callback was not called for file in current directory (.)")
+	}
+}
+
+func TestFileWatcher_ArchivePolling(t *testing.T) {
+	fs := afero.NewMemMapFs()
+	done := make(chan bool)
+	
+	w, err := Init(done, fs, &mockLogger{})
+	if err != nil {
+		t.Fatalf("Failed to init: %v", err)
+	}
+	defer func() { done <- true }()
+
+	// Use a very short interval for testing
+	w.SetArchivePollingInterval(50 * time.Millisecond)
+
+	// Drain events
+	go func() {
+		for range w.Events {
+		}
+	}()
+
+	testPath := "/archive/file.txt"
+	_ = afero.WriteFile(fs, testPath, []byte("initial content"), 0644)
+
+	var archiveCalled bool
+	w.RegisterArchiveCallback(func(e FileWatcherEvent) {
+		if e.Path == testPath && e.Event == e.EditFileEvent() {
+			archiveCalled = true
+		}
+	})
+
+	err = w.AddArchiveFile(testPath)
+	if err != nil {
+		t.Fatalf("AddArchiveFile failed: %v", err)
+	}
+
+	// Wait for initial metadata capture
+	time.Sleep(20 * time.Millisecond)
+
+	// Change the file
+	_ = afero.WriteFile(fs, testPath, []byte("updated content"), 0644)
+
+	// Wait for polling (at least one interval)
+	time.Sleep(150 * time.Millisecond)
+
+	if !archiveCalled {
+		t.Error("Archive callback was not called after file change via polling")
 	}
 }
