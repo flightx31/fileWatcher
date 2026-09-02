@@ -68,6 +68,9 @@ func (t FileType) String() string {
 // FileChangeCallback is a function that can be registered to receive file change events.
 type FileChangeCallback func(event FileWatcherEvent)
 
+// StreamingDataCallback is a function that receives a channel of bytes for a streaming file.
+type StreamingDataCallback func(data <-chan []byte, filePath string)
+
 type FileWatcher struct {
 	Watcher              *fsnotify.Watcher
 	StandardWatchesMap   cmap.ConcurrentMap[string, FileType]
@@ -87,6 +90,9 @@ type FileWatcher struct {
 	onArchiveCallback    FileChangeCallback
 	onLowLatencyCallback FileChangeCallback
 	onStreamingCallback  FileChangeCallback
+	onStreamingDataCallback StreamingDataCallback
+	streamingChannels       cmap.ConcurrentMap[string, chan []byte]
+	streamingOffsets        cmap.ConcurrentMap[string, int64]
 	mu                   sync.RWMutex
 }
 
@@ -195,6 +201,8 @@ func Init(done chan bool, newFs afero.Fs, l Logger) (*FileWatcher, error) {
 	res.standardAggressiveness = 1.0
 	res.standardMetadataMap = cmap.New[*StandardMetadata]()
 	res.standardLockedFiles = cmap.New[bool]()
+	res.streamingChannels = cmap.New[chan []byte]()
+	res.streamingOffsets = cmap.New[int64]()
 	res.Errors = make(chan error)
 	res.Events = make(chan FileWatcherEvent)
 
@@ -397,6 +405,13 @@ func (w *FileWatcher) RegisterStreamingCallback(cb FileChangeCallback) {
 	w.onStreamingCallback = cb
 }
 
+// RegisterStreamingDataCallback sets the callback for receiving streamed bytes.
+func (w *FileWatcher) RegisterStreamingDataCallback(cb StreamingDataCallback) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.onStreamingDataCallback = cb
+}
+
 func (w *FileWatcher) sendEvent(e FileWatcherEvent) {
 	w.Events <- e
 	w.mu.RLock()
@@ -421,6 +436,9 @@ func (w *FileWatcher) sendEvent(e FileWatcherEvent) {
 			cb = w.onLowLatencyCallback
 		case Streaming:
 			cb = w.onStreamingCallback
+			if e.IsEditFileEvent() {
+				w.readStreamingData(e.Path)
+			}
 		}
 
 		if cb != nil {
@@ -480,6 +498,10 @@ func (w *FileWatcher) addWithType(path string, fileType FileType) error {
 		}
 		if fileType == Standard {
 			w.updateStandardMetadata(path)
+			return nil
+		}
+		if fileType == Streaming {
+			w.initStreaming(path)
 			return nil
 		}
 
@@ -599,6 +621,11 @@ func (w *FileWatcher) removeFromAllMaps(path string) {
 	w.archiveMetadataMap.Remove(path)
 	w.standardMetadataMap.Remove(path)
 	w.standardLockedFiles.Remove(path)
+	if ch, ok := w.streamingChannels.Get(path); ok {
+		close(ch)
+		w.streamingChannels.Remove(path)
+	}
+	w.streamingOffsets.Remove(path)
 }
 
 func (w *FileWatcher) Close() error {

@@ -1,8 +1,10 @@
 package fileWatcher
 
 import (
+	"os"
 	"testing"
 	"time"
+
 	"github.com/spf13/afero"
 )
 
@@ -269,5 +271,75 @@ func TestFileWatcher_StandardPolling(t *testing.T) {
 	
 	if standardChangeCount <= startCount {
 		t.Errorf("Expected change 3 to be picked up by fast poll, count stayed at %d", standardChangeCount)
+	}
+}
+
+func TestFileWatcher_StreamingData(t *testing.T) {
+	fs := afero.NewMemMapFs()
+	done := make(chan bool)
+	w, err := Init(done, fs, &mockLogger{})
+	if err != nil {
+		t.Fatalf("Failed to init: %v", err)
+	}
+	defer func() { done <- true }()
+
+	testPath := "/stream.log"
+	initialData := []byte("initial content")
+	_ = afero.WriteFile(fs, testPath, initialData, 0644)
+
+	dataReceived := make(chan []byte, 10)
+	var callbackCalled bool
+	w.RegisterStreamingDataCallback(func(data <-chan []byte, path string) {
+		if path == testPath {
+			callbackCalled = true
+			for b := range data {
+				dataReceived <- b
+			}
+		}
+	})
+
+	err = w.AddStreamingFile(testPath)
+	if err != nil {
+		t.Fatalf("AddStreamingFile failed: %v", err)
+	}
+
+	// Wait for callback to be triggered
+	time.Sleep(20 * time.Millisecond)
+	if !callbackCalled {
+		t.Error("Streaming data callback was not called")
+	}
+
+	// Check that initial content was NOT streamed (should start from end)
+	select {
+	case <-dataReceived:
+		t.Error("Initial content should not be streamed")
+	default:
+	}
+
+	// Append data
+	appendData := []byte(" new data")
+	f, _ := fs.OpenFile(testPath, os.O_APPEND|os.O_WRONLY, 0644)
+	_, _ = f.Write(appendData)
+	_ = f.Close()
+
+	// Manually trigger read (since fsnotify doesn't work with MemMapFs)
+	w.readStreamingData(testPath)
+
+	select {
+	case data := <-dataReceived:
+		if string(data) != string(appendData) {
+			t.Errorf("Expected %s, got %s", string(appendData), string(data))
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Error("Timed out waiting for streamed data")
+	}
+	
+	// Test cleanup on remove
+	w.Remove(testPath)
+	time.Sleep(20 * time.Millisecond)
+	// Channel should be closed, which would break the loop in the callback
+	// and we could verify it, but here it's enough to check if it's removed from maps.
+	if w.Contains(testPath) {
+		t.Error("File still exists in maps after removal")
 	}
 }
