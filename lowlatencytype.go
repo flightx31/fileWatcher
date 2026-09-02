@@ -2,6 +2,7 @@ package fileWatcher
 
 import (
 	"os"
+
 	"github.com/spf13/afero"
 )
 
@@ -12,7 +13,7 @@ func (w *FileWatcher) addLowLatencyRecursive(path string) error {
 			return err
 		}
 		if info.IsDir() {
-			err = w.Watcher.Add(subPath)
+			err = w.fsNotify.Add(subPath)
 			if err != nil {
 				logger.Error("Failed to add directory to low latency watcher", "path", subPath, "error", err)
 			}

@@ -39,8 +39,8 @@ func (w *FileWatcher) checkArchiveChanges() {
 	// We need to check both the explicitly watched paths and their contents if they are directories.
 	// Also need to detect deletions of previously known files.
 
-	watchedPaths := w.ArchiveWatchesMap.Keys()
-	
+	watchedPaths := w.archiveWatchesMap.Keys()
+
 	// Track paths seen in this iteration to detect deletions
 	seenPaths := make(map[string]bool)
 
@@ -49,7 +49,7 @@ func (w *FileWatcher) checkArchiveChanges() {
 			if err != nil {
 				return nil // Skip items that can't be accessed
 			}
-			
+
 			seenPaths[path] = true
 			w.checkFileOrDir(path, info)
 			return nil
@@ -61,7 +61,7 @@ func (w *FileWatcher) checkArchiveChanges() {
 		if !seenPaths[path] {
 			// Check if this path is still supposed to be watched (belonging to one of the root paths)
 			// Actually, if it's in metadata but not seen in walk, it's deleted.
-			
+
 			// We should only report deletion if it's under one of the currently watched Archive roots
 			isStillArchive := false
 			for _, root := range watchedPaths {
@@ -70,7 +70,7 @@ func (w *FileWatcher) checkArchiveChanges() {
 					break
 				}
 			}
-			
+
 			if isStillArchive {
 				oldMeta, _ := w.archiveMetadataMap.Get(path)
 				e := FileWatcherEvent{Path: path}
@@ -90,7 +90,7 @@ func (w *FileWatcher) checkArchiveChanges() {
 // I'll import strings.
 func (w *FileWatcher) checkFileOrDir(path string, info os.FileInfo) {
 	oldMeta, exists := w.archiveMetadataMap.Get(path)
-	
+
 	if !exists {
 		// New file discovered
 		newMeta := &FileMetadata{
@@ -103,7 +103,7 @@ func (w *FileWatcher) checkFileOrDir(path string, info os.FileInfo) {
 			newMeta.Hash, _ = w.calculateHash(path)
 		}
 		w.archiveMetadataMap.Set(path, newMeta)
-		
+
 		// Trigger CREATE event
 		e := FileWatcherEvent{Path: path}
 		if newMeta.IsDir {
@@ -125,7 +125,7 @@ func (w *FileWatcher) checkFileOrDir(path string, info os.FileInfo) {
 			eDel.Event = eDel.DeleteFileEvent()
 		}
 		w.sendEvent(eDel)
-		
+
 		eNew := FileWatcherEvent{Path: path}
 		if info.IsDir() {
 			eNew.Event = eNew.CreateFolderEvent()
@@ -133,7 +133,7 @@ func (w *FileWatcher) checkFileOrDir(path string, info os.FileInfo) {
 			eNew.Event = eNew.CreateFileEvent()
 		}
 		w.sendEvent(eNew)
-		
+
 		// Update metadata
 		newMeta := &FileMetadata{
 			Path:    path,
@@ -156,7 +156,7 @@ func (w *FileWatcher) checkFileOrDir(path string, info os.FileInfo) {
 			if newHash != oldMeta.Hash {
 				e := FileWatcherEvent{Path: path, Event: FileWatcherEvent{}.EditFileEvent()}
 				w.sendEvent(e)
-				
+
 				// Update metadata
 				oldMeta.Size = info.Size()
 				oldMeta.ModTime = info.ModTime()
@@ -193,7 +193,7 @@ func (w *FileWatcher) updateArchiveMetadata(path string) {
 	if err != nil {
 		return
 	}
-	
+
 	// If it's a directory, we'll discover its content in the next poll cycle.
 	// For now, just add the path itself.
 	meta := &FileMetadata{

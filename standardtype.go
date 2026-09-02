@@ -64,8 +64,8 @@ func (w *FileWatcher) watchStandardFastFiles(done chan bool) {
 }
 
 func (w *FileWatcher) checkStandardChanges(isFast bool) {
-	watchedPaths := w.StandardWatchesMap.Keys()
-	
+	watchedPaths := w.standardWatchesMap.Keys()
+
 	// For slow poll, we also want to detect deletions.
 	seenPaths := make(map[string]bool)
 
@@ -81,7 +81,7 @@ func (w *FileWatcher) checkStandardChanges(isFast bool) {
 				if !exists || !w.isHot(meta) {
 					return nil
 				}
-				
+
 				// Try to lock
 				if w.standardLockedFiles.SetIfAbsent(path, true) {
 					w.checkStandardFileOrDir(path, info)
@@ -111,7 +111,7 @@ func (w *FileWatcher) isHot(meta *StandardMetadata) bool {
 	w.mu.RLock()
 	agg := w.standardAggressiveness
 	w.mu.RUnlock()
-	
+
 	// A simple heuristic: if it changed in the last 30 seconds and has more than 1 change,
 	// or if ChangeCount > agg (where agg could be 5 or something).
 	// Let's use: ChangeCount > agg
@@ -120,7 +120,7 @@ func (w *FileWatcher) isHot(meta *StandardMetadata) bool {
 
 func (w *FileWatcher) checkStandardFileOrDir(path string, info os.FileInfo) {
 	oldMeta, exists := w.standardMetadataMap.Get(path)
-	
+
 	if !exists {
 		newMeta := &StandardMetadata{
 			FileMetadata: FileMetadata{
@@ -136,7 +136,7 @@ func (w *FileWatcher) checkStandardFileOrDir(path string, info os.FileInfo) {
 			newMeta.Hash, _ = w.calculateHash(path)
 		}
 		w.standardMetadataMap.Set(path, newMeta)
-		
+
 		e := FileWatcherEvent{Path: path}
 		if newMeta.IsDir {
 			e.Event = e.CreateFolderEvent()
@@ -150,7 +150,7 @@ func (w *FileWatcher) checkStandardFileOrDir(path string, info os.FileInfo) {
 	if info.IsDir() != oldMeta.IsDir {
 		// Type changed
 		w.reportStandardChange(path, oldMeta.IsDir, info.IsDir(), true)
-		
+
 		newMeta := &StandardMetadata{
 			FileMetadata: FileMetadata{
 				Path:    path,
@@ -172,7 +172,7 @@ func (w *FileWatcher) checkStandardFileOrDir(path string, info os.FileInfo) {
 			if newHash != oldMeta.Hash {
 				e := FileWatcherEvent{Path: path, Event: FileWatcherEvent{}.EditFileEvent()}
 				w.sendEvent(e)
-				
+
 				oldMeta.Size = info.Size()
 				oldMeta.ModTime = info.ModTime()
 				oldMeta.Hash = newHash
@@ -203,7 +203,7 @@ func (w *FileWatcher) reportStandardChange(path string, wasDir, isDir bool, isCr
 		eDel.Event = eDel.DeleteFileEvent()
 	}
 	w.sendEvent(eDel)
-	
+
 	if isCreate {
 		eNew := FileWatcherEvent{Path: path}
 		if isDir {
@@ -225,7 +225,7 @@ func (w *FileWatcher) detectStandardDeletions(seenPaths map[string]bool, watched
 					break
 				}
 			}
-			
+
 			if isStillStandard {
 				oldMeta, _ := w.standardMetadataMap.Get(path)
 				e := FileWatcherEvent{Path: path}
@@ -247,7 +247,7 @@ func (w *FileWatcher) updateStandardMetadata(path string) {
 	if err != nil {
 		return
 	}
-	
+
 	meta := &StandardMetadata{
 		FileMetadata: FileMetadata{
 			Path:    path,

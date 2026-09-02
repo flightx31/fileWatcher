@@ -15,21 +15,15 @@ var testLogger = slog.New(slog.NewTextHandler(io.Discard, nil))
 func TestFileWatcher_CallbackRouting(t *testing.T) {
 	fs := afero.NewMemMapFs()
 	done := make(chan bool)
-	
-	w, err := Init(done, fs, testLogger)
+
+	w, err := Init(done, fs, testLogger, WatcherCallbacks{})
 	if err != nil {
 		t.Fatalf("Failed to init: %v", err)
 	}
 	defer func() { done <- true }()
 
-	// Drain events to prevent blocking
-	go func() {
-		for range w.Events {
-		}
-	}()
-
 	testPath := "/tmp/test.txt"
-	w.ArchiveWatchesMap.Set(testPath, Archive)
+	w.archiveWatchesMap.Set(testPath, Archive)
 
 	var archiveCalled bool
 	w.OnArchiveCallback = func(e FileWatcherEvent) {
@@ -56,22 +50,16 @@ func TestFileWatcher_CallbackRouting(t *testing.T) {
 func TestFileWatcher_RecursiveCallbackRouting(t *testing.T) {
 	fs := afero.NewMemMapFs()
 	done := make(chan bool)
-	
-	w, err := Init(done, fs, testLogger)
+
+	w, err := Init(done, fs, testLogger, WatcherCallbacks{})
 	if err != nil {
 		t.Fatalf("Failed to init: %v", err)
 	}
 	defer func() { done <- true }()
 
-	// Drain events
-	go func() {
-		for range w.Events {
-		}
-	}()
-
 	dirPath := "/tmp/my-dir"
 	filePath := "/tmp/my-dir/file.txt"
-	w.LowLatencyWatchesMap.Set(dirPath, LowLatency)
+	w.lowLatencyWatchesMap.Set(dirPath, LowLatency)
 
 	var lowLatencyCalled bool
 	w.OnLowLatencyCallback = func(e FileWatcherEvent) {
@@ -90,22 +78,16 @@ func TestFileWatcher_RecursiveCallbackRouting(t *testing.T) {
 func TestFileWatcher_RenameTracking(t *testing.T) {
 	fs := afero.NewMemMapFs()
 	done := make(chan bool)
-	
-	w, err := Init(done, fs, testLogger)
+
+	w, err := Init(done, fs, testLogger, WatcherCallbacks{})
 	if err != nil {
 		t.Fatalf("Failed to init: %v", err)
 	}
 	defer func() { done <- true }()
 
-	// Drain events
-	go func() {
-		for range w.Events {
-		}
-	}()
-
 	oldPath := "/tmp/old.txt"
 	newPath := "/tmp/new.txt"
-	w.StreamingWatchesMap.Set(oldPath, Streaming)
+	w.streamingWatchesMap.Set(oldPath, Streaming)
 
 	event := FileWatcherEvent{
 		Path:         newPath,
@@ -127,20 +109,14 @@ func TestFileWatcher_RenameTracking(t *testing.T) {
 func TestFileWatcher_CurrentDirCallbackRouting(t *testing.T) {
 	fs := afero.NewMemMapFs()
 	done := make(chan bool)
-	
-	w, err := Init(done, fs, testLogger)
+
+	w, err := Init(done, fs, testLogger, WatcherCallbacks{})
 	if err != nil {
 		t.Fatalf("Failed to init: %v", err)
 	}
 	defer func() { done <- true }()
 
-	// Drain events
-	go func() {
-		for range w.Events {
-		}
-	}()
-
-	w.StandardWatchesMap.Set(".", Standard)
+	w.standardWatchesMap.Set(".", Standard)
 
 	var standardCalled bool
 	w.OnStandardCallback = func(e FileWatcherEvent) {
@@ -157,8 +133,8 @@ func TestFileWatcher_CurrentDirCallbackRouting(t *testing.T) {
 func TestFileWatcher_ArchivePolling(t *testing.T) {
 	fs := afero.NewMemMapFs()
 	done := make(chan bool)
-	
-	w, err := Init(done, fs, testLogger)
+
+	w, err := Init(done, fs, testLogger, WatcherCallbacks{})
 	if err != nil {
 		t.Fatalf("Failed to init: %v", err)
 	}
@@ -166,12 +142,6 @@ func TestFileWatcher_ArchivePolling(t *testing.T) {
 
 	// Use a very short interval for testing
 	w.SetArchivePollingInterval(50 * time.Millisecond)
-
-	// Drain events
-	go func() {
-		for range w.Events {
-		}
-	}()
 
 	testPath := "/archive/file.txt"
 	_ = afero.WriteFile(fs, testPath, []byte("initial content"), 0644)
@@ -205,8 +175,8 @@ func TestFileWatcher_ArchivePolling(t *testing.T) {
 func TestFileWatcher_StandardPolling(t *testing.T) {
 	fs := afero.NewMemMapFs()
 	done := make(chan bool)
-	
-	w, err := Init(done, fs, testLogger)
+
+	w, err := Init(done, fs, testLogger, WatcherCallbacks{})
 	if err != nil {
 		t.Fatalf("Failed to init: %v", err)
 	}
@@ -216,12 +186,6 @@ func TestFileWatcher_StandardPolling(t *testing.T) {
 	w.SetStandardPollingInterval(100 * time.Millisecond)
 	w.SetStandardFastPollingInterval(20 * time.Millisecond)
 	w.SetStandardAggressiveness(2)
-
-	// Drain events
-	go func() {
-		for range w.Events {
-		}
-	}()
 
 	testPath := "/standard/file.txt"
 	_ = afero.WriteFile(fs, testPath, []byte("initial content"), 0644)
@@ -251,19 +215,19 @@ func TestFileWatcher_StandardPolling(t *testing.T) {
 
 	// 2. Make it "hot"
 	_ = afero.WriteFile(fs, testPath, []byte("change 2"), 0644)
-	time.Sleep(200 * time.Millisecond) 
-	
+	time.Sleep(200 * time.Millisecond)
+
 	if standardChangeCount != 2 {
 		t.Errorf("Expected 2 changes total, got %d", standardChangeCount)
 	}
-    
+
 	// Now it should be hot (ChangeCount >= 2)
 	// Fast poll is 20ms.
-	
+
 	startCount := standardChangeCount
 	_ = afero.WriteFile(fs, testPath, []byte("change 3"), 0644)
 	time.Sleep(100 * time.Millisecond) // Should be picked up by fast poll
-	
+
 	if standardChangeCount <= startCount {
 		t.Errorf("Expected change 3 to be picked up by fast poll, count stayed at %d", standardChangeCount)
 	}
@@ -272,7 +236,7 @@ func TestFileWatcher_StandardPolling(t *testing.T) {
 func TestFileWatcher_StreamingData(t *testing.T) {
 	fs := afero.NewMemMapFs()
 	done := make(chan bool)
-	w, err := Init(done, fs, testLogger)
+	w, err := Init(done, fs, testLogger, WatcherCallbacks{})
 	if err != nil {
 		t.Fatalf("Failed to init: %v", err)
 	}
@@ -328,7 +292,7 @@ func TestFileWatcher_StreamingData(t *testing.T) {
 	case <-time.After(100 * time.Millisecond):
 		t.Error("Timed out waiting for streamed data")
 	}
-	
+
 	// Test cleanup on remove
 	w.Remove(testPath)
 	time.Sleep(20 * time.Millisecond)
