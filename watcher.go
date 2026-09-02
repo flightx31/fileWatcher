@@ -74,9 +74,14 @@ type FileWatcher struct {
 	ArchiveWatchesMap    cmap.ConcurrentMap[string, FileType]
 	LowLatencyWatchesMap cmap.ConcurrentMap[string, FileType]
 	StreamingWatchesMap  cmap.ConcurrentMap[string, FileType]
-	archiveInterval      time.Duration
-	archiveMetadataMap   cmap.ConcurrentMap[string, *FileMetadata]
-	Events               chan FileWatcherEvent
+	archiveInterval        time.Duration
+	archiveMetadataMap     cmap.ConcurrentMap[string, *FileMetadata]
+	standardInterval       time.Duration
+	standardFastInterval   time.Duration
+	standardAggressiveness float64
+	standardMetadataMap    cmap.ConcurrentMap[string, *StandardMetadata]
+	standardLockedFiles    cmap.ConcurrentMap[string, bool]
+	Events                 chan FileWatcherEvent
 	Errors               chan error
 	onStandardCallback   FileChangeCallback
 	onArchiveCallback    FileChangeCallback
@@ -91,6 +96,12 @@ type FileMetadata struct {
 	ModTime time.Time
 	Hash    string
 	IsDir   bool
+}
+
+type StandardMetadata struct {
+	FileMetadata
+	ChangeCount    int
+	LastChangeTime time.Time
 }
 
 type FileWatcherEvent struct {
@@ -179,11 +190,18 @@ func Init(done chan bool, newFs afero.Fs, l Logger) (*FileWatcher, error) {
 	res.StreamingWatchesMap = cmap.New[FileType]()
 	res.archiveInterval = 30 * time.Second
 	res.archiveMetadataMap = cmap.New[*FileMetadata]()
+	res.standardInterval = 10 * time.Second
+	res.standardFastInterval = 1 * time.Second
+	res.standardAggressiveness = 1.0
+	res.standardMetadataMap = cmap.New[*StandardMetadata]()
+	res.standardLockedFiles = cmap.New[bool]()
 	res.Errors = make(chan error)
 	res.Events = make(chan FileWatcherEvent)
 
 	go res.watchFileChangeEvents(done)
 	go res.watchArchiveFiles(done)
+	go res.watchStandardFiles(done)
+	go res.watchStandardFastFiles(done)
 
 	return &res, nil
 }
@@ -449,6 +467,10 @@ func (w *FileWatcher) addWithType(path string, fileType FileType) error {
 			w.updateArchiveMetadata(path)
 			return nil
 		}
+		if fileType == Standard {
+			w.updateStandardMetadata(path)
+			return nil
+		}
 
 		if fileInfo.IsDir() {
 			// watch the directory
@@ -472,9 +494,11 @@ func (w *FileWatcher) Add(path string) error {
 func (w *FileWatcher) Remove(path string) error {
 	if w.Contains(path) {
 		if _, ok := w.ArchiveWatchesMap.Get(path); !ok {
-			err := w.Watcher.Remove(path)
-			if err != nil {
-				log.Error(err)
+			if _, ok := w.StandardWatchesMap.Get(path); !ok {
+				err := w.Watcher.Remove(path)
+				if err != nil {
+					log.Error(err)
+				}
 			}
 		}
 
@@ -559,6 +583,8 @@ func (w *FileWatcher) removeFromAllMaps(path string) {
 	w.LowLatencyWatchesMap.Remove(path)
 	w.StreamingWatchesMap.Remove(path)
 	w.archiveMetadataMap.Remove(path)
+	w.standardMetadataMap.Remove(path)
+	w.standardLockedFiles.Remove(path)
 }
 
 func (w *FileWatcher) Close() error {

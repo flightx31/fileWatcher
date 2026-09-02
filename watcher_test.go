@@ -204,3 +204,70 @@ func TestFileWatcher_ArchivePolling(t *testing.T) {
 		t.Error("Archive callback was not called after file change via polling")
 	}
 }
+
+func TestFileWatcher_StandardPolling(t *testing.T) {
+	fs := afero.NewMemMapFs()
+	done := make(chan bool)
+	
+	w, err := Init(done, fs, &mockLogger{})
+	if err != nil {
+		t.Fatalf("Failed to init: %v", err)
+	}
+	defer func() { done <- true }()
+
+	// Short intervals for testing
+	w.SetStandardPollingInterval(100 * time.Millisecond)
+	w.SetStandardFastPollingInterval(20 * time.Millisecond)
+	w.SetStandardAggressiveness(2)
+
+	// Drain events
+	go func() {
+		for range w.Events {
+		}
+	}()
+
+	testPath := "/standard/file.txt"
+	_ = afero.WriteFile(fs, testPath, []byte("initial content"), 0644)
+
+	var standardChangeCount int
+	w.RegisterStandardCallback(func(e FileWatcherEvent) {
+		if e.Path == testPath && e.Event == e.EditFileEvent() {
+			standardChangeCount++
+		}
+	})
+
+	err = w.AddStandardFile(testPath)
+	if err != nil {
+		t.Fatalf("AddStandardFile failed: %v", err)
+	}
+
+	// Wait for initial metadata capture
+	time.Sleep(50 * time.Millisecond)
+
+	// 1. Check slow polling
+	_ = afero.WriteFile(fs, testPath, []byte("change 1"), 0644)
+	time.Sleep(200 * time.Millisecond) // Wait for slow poll
+
+	if standardChangeCount != 1 {
+		t.Errorf("Expected 1 change from slow poll, got %d", standardChangeCount)
+	}
+
+	// 2. Make it "hot"
+	_ = afero.WriteFile(fs, testPath, []byte("change 2"), 0644)
+	time.Sleep(200 * time.Millisecond) 
+	
+	if standardChangeCount != 2 {
+		t.Errorf("Expected 2 changes total, got %d", standardChangeCount)
+	}
+    
+	// Now it should be hot (ChangeCount >= 2)
+	// Fast poll is 20ms.
+	
+	startCount := standardChangeCount
+	_ = afero.WriteFile(fs, testPath, []byte("change 3"), 0644)
+	time.Sleep(100 * time.Millisecond) // Should be picked up by fast poll
+	
+	if standardChangeCount <= startCount {
+		t.Errorf("Expected change 3 to be picked up by fast poll, count stayed at %d", standardChangeCount)
+	}
+}
