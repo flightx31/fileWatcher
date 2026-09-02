@@ -9,11 +9,11 @@ import (
 func (w *FileWatcher) initStreaming(path string) {
 	info, err := fs.Stat(path)
 	if err != nil {
-		log.Error("Failed to stat streaming file: ", path, err)
+		logger.Error("Failed to stat streaming file", "path", path, "error", err)
 		return
 	}
 	if info.IsDir() {
-		log.Warn("Streaming type is not supported for directories: ", path)
+		logger.Warn("Streaming type is not supported for directories", "path", path)
 		return
 	}
 	w.streamingOffsets.Set(path, info.Size())
@@ -47,7 +47,7 @@ func (w *FileWatcher) readStreamingData(path string) {
 
 	f, err := fs.Open(path)
 	if err != nil {
-		log.Error("Failed to open streaming file: ", path, err)
+		logger.Error("Failed to open streaming file", "path", path, "error", err)
 		return
 	}
 	defer f.Close()
@@ -74,7 +74,7 @@ func (w *FileWatcher) readStreamingData(path string) {
 	data := make([]byte, newSize-offset)
 	_, err = io.ReadFull(f, data)
 	if err != nil {
-		log.Error("Failed to read new data from streaming file: ", path, err)
+		logger.Error("Failed to read new data from streaming file", "path", path, "error", err)
 		return
 	}
 
@@ -111,7 +111,7 @@ func (w *FileWatcher) watchStreamingInactivity(path string) {
 		}
 
 		if inactiveCount >= 3 { // 30 seconds
-			log.Info("Streaming stopped for ", path, ", reverting to Standard type")
+			logger.Info("Streaming stopped, reverting to Standard type", "path", path)
 			_ = w.ConvertToFileType(path, Standard)
 			return
 		}

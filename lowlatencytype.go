@@ -14,7 +14,7 @@ func (w *FileWatcher) addLowLatencyRecursive(path string) error {
 		if info.IsDir() {
 			err = w.Watcher.Add(subPath)
 			if err != nil {
-				log.Error("Failed to add directory to low latency watcher: ", subPath, err)
+				logger.Error("Failed to add directory to low latency watcher", "path", subPath, "error", err)
 			}
 		}
 		return nil

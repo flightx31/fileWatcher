@@ -1,6 +1,8 @@
 package fileWatcher
 
 import (
+	"io"
+	"log/slog"
 	"os"
 	"testing"
 	"time"
@@ -8,20 +10,13 @@ import (
 	"github.com/spf13/afero"
 )
 
-type mockLogger struct{}
-func (l *mockLogger) Panic(args ...any) {}
-func (l *mockLogger) Error(args ...any) {}
-func (l *mockLogger) Warn(args ...any)  {}
-func (l *mockLogger) Info(args ...any)  {}
-func (l *mockLogger) Debug(args ...any) {}
-func (l *mockLogger) Trace(args ...any) {}
-func (l *mockLogger) Print(args ...any) {}
+var testLogger = slog.New(slog.NewTextHandler(io.Discard, nil))
 
 func TestFileWatcher_CallbackRouting(t *testing.T) {
 	fs := afero.NewMemMapFs()
 	done := make(chan bool)
 	
-	w, err := Init(done, fs, &mockLogger{})
+	w, err := Init(done, fs, testLogger)
 	if err != nil {
 		t.Fatalf("Failed to init: %v", err)
 	}
@@ -62,7 +57,7 @@ func TestFileWatcher_RecursiveCallbackRouting(t *testing.T) {
 	fs := afero.NewMemMapFs()
 	done := make(chan bool)
 	
-	w, err := Init(done, fs, &mockLogger{})
+	w, err := Init(done, fs, testLogger)
 	if err != nil {
 		t.Fatalf("Failed to init: %v", err)
 	}
@@ -96,7 +91,7 @@ func TestFileWatcher_RenameTracking(t *testing.T) {
 	fs := afero.NewMemMapFs()
 	done := make(chan bool)
 	
-	w, err := Init(done, fs, &mockLogger{})
+	w, err := Init(done, fs, testLogger)
 	if err != nil {
 		t.Fatalf("Failed to init: %v", err)
 	}
@@ -133,7 +128,7 @@ func TestFileWatcher_CurrentDirCallbackRouting(t *testing.T) {
 	fs := afero.NewMemMapFs()
 	done := make(chan bool)
 	
-	w, err := Init(done, fs, &mockLogger{})
+	w, err := Init(done, fs, testLogger)
 	if err != nil {
 		t.Fatalf("Failed to init: %v", err)
 	}
@@ -163,7 +158,7 @@ func TestFileWatcher_ArchivePolling(t *testing.T) {
 	fs := afero.NewMemMapFs()
 	done := make(chan bool)
 	
-	w, err := Init(done, fs, &mockLogger{})
+	w, err := Init(done, fs, testLogger)
 	if err != nil {
 		t.Fatalf("Failed to init: %v", err)
 	}
@@ -211,7 +206,7 @@ func TestFileWatcher_StandardPolling(t *testing.T) {
 	fs := afero.NewMemMapFs()
 	done := make(chan bool)
 	
-	w, err := Init(done, fs, &mockLogger{})
+	w, err := Init(done, fs, testLogger)
 	if err != nil {
 		t.Fatalf("Failed to init: %v", err)
 	}
@@ -277,7 +272,7 @@ func TestFileWatcher_StandardPolling(t *testing.T) {
 func TestFileWatcher_StreamingData(t *testing.T) {
 	fs := afero.NewMemMapFs()
 	done := make(chan bool)
-	w, err := Init(done, fs, &mockLogger{})
+	w, err := Init(done, fs, testLogger)
 	if err != nil {
 		t.Fatalf("Failed to init: %v", err)
 	}

@@ -3,6 +3,7 @@
 package fileWatcher
 
 import (
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,20 +15,10 @@ import (
 	"github.com/spf13/afero"
 )
 
-type Logger interface {
-	Panic(args ...any)
-	Error(args ...any)
-	Warn(args ...any)
-	Info(args ...any)
-	Debug(args ...any)
-	Trace(args ...any)
-	Print(args ...any)
-}
+var logger *slog.Logger
 
-var log Logger
-
-func SetLogger(l Logger) {
-	log = l
+func SetLogger(l *slog.Logger) {
+	logger = l
 }
 
 var fs afero.Fs
@@ -180,7 +171,7 @@ func (e FileWatcherEvent) IsChModEvent() bool {
 	return e.Event == e.ChModEvent()
 }
 
-func Init(done chan bool, newFs afero.Fs, l Logger) (*FileWatcher, error) {
+func Init(done chan bool, newFs afero.Fs, l *slog.Logger) (*FileWatcher, error) {
 	SetLogger(l)
 	SetFs(newFs)
 	fsWatcher, err := fsnotify.NewWatcher()
@@ -308,9 +299,9 @@ func (w *FileWatcher) watchFileChangeEvents(done chan bool) {
 				resetStack(eventsList)
 			} else if rapidDelete {
 				if eventsList[0].Name == eventsList[1].Name {
-					log.Debug("File " + eventsList[0].Name + "Was rapidly created and then removed")
+					logger.Debug("File rapidly created and then removed", "path", eventsList[0].Name)
 				} else {
-					log.Warn("Unexpected series of events: ", eventsList)
+					logger.Warn("Unexpected series of events", "events", eventsList)
 				}
 
 				resetStack(eventsList)
@@ -332,14 +323,14 @@ func (w *FileWatcher) watchFileChangeEvents(done chan bool) {
 			} else if eventsList[0].Has(fsnotify.Remove) && !eventsList[0].Has(fsnotify.Rename) {
 				// do nothing
 			} else {
-				log.Warn("Unknown event " + event.String())
+				logger.Warn("Unknown event", "event", event.String())
 			}
 		case <-delayChan:
 			// special create event handling
 			if onlyCreateEvent {
 				fileInfo, err := os.Stat(eventsList[0].Name)
 				if os.IsNotExist(err) {
-					log.Error("File " + eventsList[0].Name + " is missing")
+					logger.Error("File is missing", "path", eventsList[0].Name)
 				}
 
 				if fileInfo.IsDir() {
@@ -362,7 +353,7 @@ func (w *FileWatcher) watchFileChangeEvents(done chan bool) {
 		case <-done:
 			err := w.Close()
 			if err != nil {
-				log.Error(err)
+				logger.Error("Failed to close watcher", "error", err)
 			}
 			return
 		}
@@ -370,7 +361,7 @@ func (w *FileWatcher) watchFileChangeEvents(done chan bool) {
 }
 
 func eventDelay(channel chan bool) {
-	log.Trace("eventDelay() function starting")
+	logger.Debug("eventDelay() function starting")
 	// 125 milliseconds because it's still a pretty long delay from the computers' perspective, but
 	// barely noticeable from a human perspective.
 	time.Sleep(time.Millisecond * 125)
@@ -533,7 +524,7 @@ func (w *FileWatcher) Remove(path string) error {
 			if _, ok := w.StandardWatchesMap.Get(path); !ok {
 				err := w.Watcher.Remove(path)
 				if err != nil {
-					log.Error(err)
+					logger.Error("Failed to remove path from watcher", "path", path, "error", err)
 				}
 			}
 		}
