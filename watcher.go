@@ -256,6 +256,14 @@ func (w *FileWatcher) watchFileChangeEvents(done chan bool) {
 				break
 			}
 
+			if event.Has(fsnotify.Write) {
+				e.Event = e.EditFileEvent()
+				e.Path = event.Name
+				e.PreviousPath = ""
+				w.sendEvent(e)
+				break
+			}
+
 			// move first entry to last spot
 			eventsList[1] = eventsList[0]
 			// copy current event to first spot
@@ -328,6 +336,9 @@ func (w *FileWatcher) watchFileChangeEvents(done chan bool) {
 
 				if fileInfo.IsDir() {
 					e.Event = e.CreateFolderEvent()
+					if t, ok := w.getFileType(e.Path); ok && t == LowLatency {
+						_ = w.addLowLatencyRecursive(e.Path)
+					}
 				} else {
 					e.Event = e.CreateFileEvent()
 				}
@@ -473,6 +484,9 @@ func (w *FileWatcher) addWithType(path string, fileType FileType) error {
 		}
 
 		if fileInfo.IsDir() {
+			if fileType == LowLatency {
+				return w.addLowLatencyRecursive(path)
+			}
 			// watch the directory
 			return w.Watcher.Add(path)
 		} else {
