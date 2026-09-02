@@ -32,16 +32,16 @@ func TestFileWatcher_CallbackRouting(t *testing.T) {
 	w.ArchiveWatchesMap.Set(testPath, Archive)
 
 	var archiveCalled bool
-	w.RegisterArchiveCallback(func(e FileWatcherEvent) {
+	w.OnArchiveCallback = func(e FileWatcherEvent) {
 		if e.Path == testPath {
 			archiveCalled = true
 		}
-	})
+	}
 
 	var standardCalled bool
-	w.RegisterStandardCallback(func(e FileWatcherEvent) {
+	w.OnStandardCallback = func(e FileWatcherEvent) {
 		standardCalled = true
-	})
+	}
 
 	w.sendEvent(FileWatcherEvent{Path: testPath, Event: "EDIT_FILE"})
 
@@ -74,11 +74,11 @@ func TestFileWatcher_RecursiveCallbackRouting(t *testing.T) {
 	w.LowLatencyWatchesMap.Set(dirPath, LowLatency)
 
 	var lowLatencyCalled bool
-	w.RegisterLowLatencyCallback(func(e FileWatcherEvent) {
+	w.OnLowLatencyCallback = func(e FileWatcherEvent) {
 		if e.Path == filePath {
 			lowLatencyCalled = true
 		}
-	})
+	}
 
 	w.sendEvent(FileWatcherEvent{Path: filePath, Event: "CREATE_FILE"})
 
@@ -143,9 +143,9 @@ func TestFileWatcher_CurrentDirCallbackRouting(t *testing.T) {
 	w.StandardWatchesMap.Set(".", Standard)
 
 	var standardCalled bool
-	w.RegisterStandardCallback(func(e FileWatcherEvent) {
+	w.OnStandardCallback = func(e FileWatcherEvent) {
 		standardCalled = true
-	})
+	}
 
 	w.sendEvent(FileWatcherEvent{Path: "some_file.txt", Event: "CREATE_FILE"})
 
@@ -177,11 +177,11 @@ func TestFileWatcher_ArchivePolling(t *testing.T) {
 	_ = afero.WriteFile(fs, testPath, []byte("initial content"), 0644)
 
 	var archiveCalled bool
-	w.RegisterArchiveCallback(func(e FileWatcherEvent) {
+	w.OnArchiveCallback = func(e FileWatcherEvent) {
 		if e.Path == testPath && e.Event == e.EditFileEvent() {
 			archiveCalled = true
 		}
-	})
+	}
 
 	err = w.AddArchiveFile(testPath)
 	if err != nil {
@@ -227,11 +227,11 @@ func TestFileWatcher_StandardPolling(t *testing.T) {
 	_ = afero.WriteFile(fs, testPath, []byte("initial content"), 0644)
 
 	var standardChangeCount int
-	w.RegisterStandardCallback(func(e FileWatcherEvent) {
+	w.OnStandardCallback = func(e FileWatcherEvent) {
 		if e.Path == testPath && e.Event == e.EditFileEvent() {
 			standardChangeCount++
 		}
-	})
+	}
 
 	err = w.AddStandardFile(testPath)
 	if err != nil {
@@ -284,14 +284,14 @@ func TestFileWatcher_StreamingData(t *testing.T) {
 
 	dataReceived := make(chan []byte, 10)
 	var callbackCalled bool
-	w.RegisterStreamingDataCallback(func(data <-chan []byte, path string) {
+	w.OnStreamingDataCallback = func(data <-chan []byte, path string) {
 		if path == testPath {
 			callbackCalled = true
 			for b := range data {
 				dataReceived <- b
 			}
 		}
-	})
+	}
 
 	err = w.AddStreamingFile(testPath)
 	if err != nil {

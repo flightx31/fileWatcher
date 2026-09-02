@@ -24,31 +24,31 @@ func main() {
 		os.Exit(1)
 	}
 
-	// 1. Register callbacks for each file type to handle metadata events.
-	w.RegisterStandardCallback(func(e fileWatcher.FileWatcherEvent) {
+	// 1. Set callbacks for each file type to handle metadata events.
+	w.OnStandardCallback = func(e fileWatcher.FileWatcherEvent) {
 		fmt.Printf(">>> [Standard Event] %s: %s\n", e.Event, e.Path)
-	})
+	}
 
-	w.RegisterArchiveCallback(func(e fileWatcher.FileWatcherEvent) {
+	w.OnArchiveCallback = func(e fileWatcher.FileWatcherEvent) {
 		fmt.Printf(">>> [Archive Event] %s: %s\n", e.Event, e.Path)
-	})
+	}
 
-	w.RegisterLowLatencyCallback(func(e fileWatcher.FileWatcherEvent) {
+	w.OnLowLatencyCallback = func(e fileWatcher.FileWatcherEvent) {
 		fmt.Printf(">>> [LowLatency Event] %s: %s\n", e.Event, e.Path)
-	})
+	}
 
-	w.RegisterStreamingCallback(func(e fileWatcher.FileWatcherEvent) {
+	w.OnStreamingCallback = func(e fileWatcher.FileWatcherEvent) {
 		fmt.Printf(">>> [Streaming Event] %s: %s\n", e.Event, e.Path)
-	})
+	}
 
-	// 2. Register special callback for raw data streaming.
-	w.RegisterStreamingDataCallback(func(data <-chan []byte, filePath string) {
+	// 2. Set special callback for raw data streaming.
+	w.OnStreamingDataCallback = func(data <-chan []byte, filePath string) {
 		fmt.Printf(">>> [Streaming Data] Listening for bytes on: %s\n", filePath)
 		for chunk := range data {
 			fmt.Printf(">>> [Streaming Data] %s received %d bytes: %q\n", filePath, len(chunk), string(chunk))
 		}
 		fmt.Printf(">>> [Streaming Data] Channel closed for: %s\n", filePath)
-	})
+	}
 
 	// 3. Setup temporary environment for the demo.
 	tempDir, err := os.MkdirTemp("", "fw_demo_*")

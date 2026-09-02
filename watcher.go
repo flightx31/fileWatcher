@@ -63,28 +63,28 @@ type FileChangeCallback func(event FileWatcherEvent)
 type StreamingDataCallback func(data <-chan []byte, filePath string)
 
 type FileWatcher struct {
-	Watcher              *fsnotify.Watcher
-	StandardWatchesMap   cmap.ConcurrentMap[string, FileType]
-	ArchiveWatchesMap    cmap.ConcurrentMap[string, FileType]
-	LowLatencyWatchesMap cmap.ConcurrentMap[string, FileType]
-	StreamingWatchesMap  cmap.ConcurrentMap[string, FileType]
-	archiveInterval        time.Duration
-	archiveMetadataMap     cmap.ConcurrentMap[string, *FileMetadata]
-	standardInterval       time.Duration
-	standardFastInterval   time.Duration
-	standardAggressiveness float64
-	standardMetadataMap    cmap.ConcurrentMap[string, *StandardMetadata]
-	standardLockedFiles    cmap.ConcurrentMap[string, bool]
-	Events                 chan FileWatcherEvent
-	Errors               chan error
-	onStandardCallback   FileChangeCallback
-	onArchiveCallback    FileChangeCallback
-	onLowLatencyCallback FileChangeCallback
-	onStreamingCallback  FileChangeCallback
-	onStreamingDataCallback StreamingDataCallback
+	Watcher                 *fsnotify.Watcher
+	StandardWatchesMap      cmap.ConcurrentMap[string, FileType]
+	ArchiveWatchesMap       cmap.ConcurrentMap[string, FileType]
+	LowLatencyWatchesMap    cmap.ConcurrentMap[string, FileType]
+	StreamingWatchesMap     cmap.ConcurrentMap[string, FileType]
+	archiveInterval         time.Duration
+	archiveMetadataMap      cmap.ConcurrentMap[string, *FileMetadata]
+	standardInterval        time.Duration
+	standardFastInterval    time.Duration
+	standardAggressiveness  float64
+	standardMetadataMap     cmap.ConcurrentMap[string, *StandardMetadata]
+	standardLockedFiles     cmap.ConcurrentMap[string, bool]
+	Events                  chan FileWatcherEvent
+	Errors                  chan error
+	OnStandardCallback      FileChangeCallback
+	OnArchiveCallback       FileChangeCallback
+	OnLowLatencyCallback    FileChangeCallback
+	OnStreamingCallback     FileChangeCallback
+	OnStreamingDataCallback StreamingDataCallback
 	streamingChannels       cmap.ConcurrentMap[string, chan []byte]
 	streamingOffsets        cmap.ConcurrentMap[string, int64]
-	mu                   sync.RWMutex
+	mu                      sync.RWMutex
 }
 
 type FileMetadata struct {
@@ -368,40 +368,6 @@ func eventDelay(channel chan bool) {
 	channel <- true
 }
 
-// RegisterStandardCallback sets the callback for Standard file type events.
-func (w *FileWatcher) RegisterStandardCallback(cb FileChangeCallback) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	w.onStandardCallback = cb
-}
-
-// RegisterArchiveCallback sets the callback for Archive file type events.
-func (w *FileWatcher) RegisterArchiveCallback(cb FileChangeCallback) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	w.onArchiveCallback = cb
-}
-
-// RegisterLowLatencyCallback sets the callback for LowLatency file type events.
-func (w *FileWatcher) RegisterLowLatencyCallback(cb FileChangeCallback) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	w.onLowLatencyCallback = cb
-}
-
-// RegisterStreamingCallback sets the callback for Streaming file type events.
-func (w *FileWatcher) RegisterStreamingCallback(cb FileChangeCallback) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	w.onStreamingCallback = cb
-}
-
-// RegisterStreamingDataCallback sets the callback for receiving streamed bytes.
-func (w *FileWatcher) RegisterStreamingDataCallback(cb StreamingDataCallback) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	w.onStreamingDataCallback = cb
-}
 
 func (w *FileWatcher) sendEvent(e FileWatcherEvent) {
 	w.Events <- e
@@ -420,13 +386,13 @@ func (w *FileWatcher) sendEvent(e FileWatcherEvent) {
 		var cb FileChangeCallback
 		switch t {
 		case Standard:
-			cb = w.onStandardCallback
+			cb = w.OnStandardCallback
 		case Archive:
-			cb = w.onArchiveCallback
+			cb = w.OnArchiveCallback
 		case LowLatency:
-			cb = w.onLowLatencyCallback
+			cb = w.OnLowLatencyCallback
 		case Streaming:
-			cb = w.onStreamingCallback
+			cb = w.OnStreamingCallback
 			if e.IsEditFileEvent() {
 				w.readStreamingData(e.Path)
 			}

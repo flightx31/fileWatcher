@@ -22,7 +22,7 @@ func (w *FileWatcher) initStreaming(path string) {
 	w.streamingChannels.Set(path, ch)
 
 	w.mu.RLock()
-	cb := w.onStreamingDataCallback
+	cb := w.OnStreamingDataCallback
 	w.mu.RUnlock()
 
 	if cb != nil {
@@ -86,7 +86,7 @@ func (w *FileWatcher) readStreamingData(path string) {
 func (w *FileWatcher) watchStreamingInactivity(path string) {
 	// Simple inactivity check: if offset doesn't change for a while, stop.
 	lastOffset, _ := w.streamingOffsets.Get(path)
-	
+
 	// We check every 10 seconds, if it hasn't changed in 30 seconds total, we stop.
 	inactiveCount := 0
 	ticker := time.NewTicker(10 * time.Second)
