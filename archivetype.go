@@ -20,14 +20,14 @@ func (w *FileWatcher) SetArchivePollingInterval(d time.Duration) {
 }
 
 // watchArchiveFiles periodically scans all paths registered as Archive.
-func (w *FileWatcher) watchArchiveFiles(done chan bool) {
+func (w *FileWatcher) watchArchiveFiles() {
 	for {
 		w.mu.RLock()
 		interval := w.archiveInterval
 		w.mu.RUnlock()
 
 		select {
-		case <-done:
+		case <-w.done:
 			return
 		case <-time.After(interval):
 			w.checkArchiveChanges()

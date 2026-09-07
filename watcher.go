@@ -84,6 +84,7 @@ type FileWatcher struct {
 	streamingChannels       cmap.ConcurrentMap[string, chan []byte]
 	streamingOffsets        cmap.ConcurrentMap[string, int64]
 	mu                      sync.RWMutex
+	done                    chan bool
 }
 
 type FileMetadata struct {
@@ -180,7 +181,7 @@ type WatcherCallbacks struct {
 	OnError         func(error)
 }
 
-func Init(done chan bool, newFs afero.Fs, l *slog.Logger, callbacks WatcherCallbacks) (*FileWatcher, error) {
+func Init(newFs afero.Fs, l *slog.Logger, callbacks WatcherCallbacks) (*FileWatcher, error) {
 	SetLogger(l)
 	SetFs(newFs)
 	fsWatcher, err := fsnotify.NewWatcher()
@@ -203,6 +204,7 @@ func Init(done chan bool, newFs afero.Fs, l *slog.Logger, callbacks WatcherCallb
 	res.standardLockedFiles = cmap.New[bool]()
 	res.streamingChannels = cmap.New[chan []byte]()
 	res.streamingOffsets = cmap.New[int64]()
+	res.done = make(chan bool)
 
 	res.OnStandardCallback = callbacks.OnStandard
 	res.OnArchiveCallback = callbacks.OnArchive
@@ -211,10 +213,10 @@ func Init(done chan bool, newFs afero.Fs, l *slog.Logger, callbacks WatcherCallb
 	res.OnStreamingDataCallback = callbacks.OnStreamingData
 	res.OnErrorCallback = callbacks.OnError
 
-	go res.watchFileChangeEvents(done)
-	go res.watchArchiveFiles(done)
-	go res.watchStandardFiles(done)
-	go res.watchStandardFastFiles(done)
+	go res.watchFileChangeEvents()
+	go res.watchArchiveFiles()
+	go res.watchStandardFiles()
+	go res.watchStandardFastFiles()
 
 	return &res, nil
 }
@@ -247,7 +249,7 @@ func resetStack(s []fsnotify.Event) {
 // Edit a file - cache: [create, remove] - double event, clear cache
 // REMOVE - has the path of the file being edited
 // CREATE - has the path of the file being edited
-func (w *FileWatcher) watchFileChangeEvents(done chan bool) {
+func (w *FileWatcher) watchFileChangeEvents() {
 	eventsList := make([]fsnotify.Event, 2)
 	onlyCreateEvent := false
 	delayChan := make(chan bool)
@@ -366,11 +368,7 @@ func (w *FileWatcher) watchFileChangeEvents(done chan bool) {
 			if w.OnErrorCallback != nil {
 				w.OnErrorCallback(err)
 			}
-		case <-done:
-			err := w.Close()
-			if err != nil {
-				logger.Error("Failed to close watcher", "error", err)
-			}
+		case <-w.done:
 			return
 		}
 	}
@@ -600,5 +598,6 @@ func (w *FileWatcher) removeFromAllMaps(path string) {
 }
 
 func (w *FileWatcher) Close() error {
+	close(w.done)
 	return w.fsNotify.Close()
 }

@@ -16,9 +16,8 @@ func main() {
 
 	// Initialize with OsFs for real file system interaction.
 	fs := afero.NewOsFs()
-	done := make(chan bool)
 
-	w, err := fileWatcher.Init(done, fs, slog.Default(), fileWatcher.WatcherCallbacks{
+	w, err := fileWatcher.Init(fs, slog.Default(), fileWatcher.WatcherCallbacks{
 		OnStandard: func(e fileWatcher.FileWatcherEvent) {
 			fmt.Printf(">>> [Standard Event] %s: %s\n", e.Event, e.Path)
 		},
@@ -112,6 +111,6 @@ func main() {
 	time.Sleep(10 * time.Second)
 
 	fmt.Println("--- Demo finished ---")
-	done <- true // Signal watcher to stop
+	w.Close()
 	time.Sleep(500 * time.Millisecond)
 }

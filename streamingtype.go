@@ -92,28 +92,33 @@ func (w *FileWatcher) watchStreamingInactivity(path string) {
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		// Check if it's still a streaming file
-		if t, ok := w.GetFileType(path); !ok || t != Streaming {
+	for {
+		select {
+		case <-w.done:
 			return
-		}
+		case <-ticker.C:
+			// Check if it's still a streaming file
+			if t, ok := w.GetFileType(path); !ok || t != Streaming {
+				return
+			}
 
-		currentOffset, ok := w.streamingOffsets.Get(path)
-		if !ok {
-			return
-		}
+			currentOffset, ok := w.streamingOffsets.Get(path)
+			if !ok {
+				return
+			}
 
-		if currentOffset == lastOffset {
-			inactiveCount++
-		} else {
-			inactiveCount = 0
-			lastOffset = currentOffset
-		}
+			if currentOffset == lastOffset {
+				inactiveCount++
+			} else {
+				inactiveCount = 0
+				lastOffset = currentOffset
+			}
 
-		if inactiveCount >= 3 { // 30 seconds
-			logger.Info("Streaming stopped, reverting to Standard type", "path", path)
-			_ = w.ConvertToFileType(path, Standard)
-			return
+			if inactiveCount >= 3 { // 30 seconds
+				logger.Info("Streaming stopped, reverting to Standard type", "path", path)
+				_ = w.ConvertToFileType(path, Standard)
+				return
+			}
 		}
 	}
 }

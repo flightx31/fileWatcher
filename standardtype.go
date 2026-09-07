@@ -32,14 +32,14 @@ func (w *FileWatcher) SetStandardAggressiveness(a float64) {
 }
 
 // watchStandardFiles is the slow poller that works through the entire list.
-func (w *FileWatcher) watchStandardFiles(done chan bool) {
+func (w *FileWatcher) watchStandardFiles() {
 	for {
 		w.mu.RLock()
 		interval := w.standardInterval
 		w.mu.RUnlock()
 
 		select {
-		case <-done:
+		case <-w.done:
 			return
 		case <-time.After(interval):
 			w.checkStandardChanges(false)
@@ -48,14 +48,14 @@ func (w *FileWatcher) watchStandardFiles(done chan bool) {
 }
 
 // watchStandardFastFiles is the fast poller for files changing quickly.
-func (w *FileWatcher) watchStandardFastFiles(done chan bool) {
+func (w *FileWatcher) watchStandardFastFiles() {
 	for {
 		w.mu.RLock()
 		interval := w.standardFastInterval
 		w.mu.RUnlock()
 
 		select {
-		case <-done:
+		case <-w.done:
 			return
 		case <-time.After(interval):
 			w.checkStandardChanges(true)
