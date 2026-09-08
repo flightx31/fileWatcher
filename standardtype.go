@@ -70,7 +70,8 @@ func (w *FileWatcher) checkStandardChanges(isFast bool) {
 	seenPaths := make(map[string]bool)
 
 	for _, rootPath := range watchedPaths {
-		_ = afero.Walk(fs, rootPath, func(path string, info os.FileInfo, err error) error {
+		currentFs := w.getFsForPath(rootPath)
+		_ = afero.Walk(currentFs, rootPath, func(path string, info os.FileInfo, err error) error {
 			if err != nil {
 				return nil
 			}
@@ -243,7 +244,8 @@ func (w *FileWatcher) detectStandardDeletions(seenPaths map[string]bool, watched
 }
 
 func (w *FileWatcher) updateStandardMetadata(path string) {
-	info, err := fs.Stat(path)
+	currentFs := w.getFsForPath(path)
+	info, err := currentFs.Stat(path)
 	if err != nil {
 		return
 	}

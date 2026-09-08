@@ -45,7 +45,8 @@ func (w *FileWatcher) checkArchiveChanges() {
 	seenPaths := make(map[string]bool)
 
 	for _, rootPath := range watchedPaths {
-		_ = afero.Walk(fs, rootPath, func(path string, info os.FileInfo, err error) error {
+		currentFs := w.getFsForPath(rootPath)
+		_ = afero.Walk(currentFs, rootPath, func(path string, info os.FileInfo, err error) error {
 			if err != nil {
 				return nil // Skip items that can't be accessed
 			}
@@ -174,7 +175,8 @@ func (w *FileWatcher) checkFileOrDir(path string, info os.FileInfo) {
 }
 
 func (w *FileWatcher) calculateHash(path string) (string, error) {
-	f, err := fs.Open(path)
+	currentFs := w.getFsForPath(path)
+	f, err := currentFs.Open(path)
 	if err != nil {
 		return "", err
 	}
@@ -189,7 +191,8 @@ func (w *FileWatcher) calculateHash(path string) (string, error) {
 }
 
 func (w *FileWatcher) updateArchiveMetadata(path string) {
-	info, err := fs.Stat(path)
+	currentFs := w.getFsForPath(path)
+	info, err := currentFs.Stat(path)
 	if err != nil {
 		return
 	}

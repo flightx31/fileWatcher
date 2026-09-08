@@ -7,7 +7,8 @@ import (
 
 // initStreaming initializes the streaming metadata and calls the callback.
 func (w *FileWatcher) initStreaming(path string) {
-	info, err := fs.Stat(path)
+	currentFs := w.getFsForPath(path)
+	info, err := currentFs.Stat(path)
 	if err != nil {
 		logger.Error("Failed to stat streaming file", "path", path, "error", err)
 		return
@@ -45,7 +46,8 @@ func (w *FileWatcher) readStreamingData(path string) {
 		return
 	}
 
-	f, err := fs.Open(path)
+	currentFs := w.getFsForPath(path)
+	f, err := currentFs.Open(path)
 	if err != nil {
 		logger.Error("Failed to open streaming file", "path", path, "error", err)
 		return

@@ -3,6 +3,7 @@
 package fileWatcher
 
 import (
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -19,12 +20,6 @@ var logger *slog.Logger
 
 func SetLogger(l *slog.Logger) {
 	logger = l
-}
-
-var fs afero.Fs
-
-func SetFs(newFs afero.Fs) {
-	fs = newFs
 }
 
 // FileType represents the classification of a watched file.
@@ -85,6 +80,8 @@ type FileWatcher struct {
 	streamingOffsets        cmap.ConcurrentMap[string, int64]
 	mu                      sync.RWMutex
 	done                    chan bool
+	defaultFs               afero.Fs
+	fsMap                   cmap.ConcurrentMap[string, afero.Fs]
 }
 
 type FileMetadata struct {
@@ -183,7 +180,6 @@ type WatcherCallbacks struct {
 
 func Init(newFs afero.Fs, l *slog.Logger, callbacks WatcherCallbacks) (*FileWatcher, error) {
 	SetLogger(l)
-	SetFs(newFs)
 	fsWatcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		return nil, err
@@ -205,6 +201,12 @@ func Init(newFs afero.Fs, l *slog.Logger, callbacks WatcherCallbacks) (*FileWatc
 	res.streamingChannels = cmap.New[chan []byte]()
 	res.streamingOffsets = cmap.New[int64]()
 	res.done = make(chan bool)
+
+	res.defaultFs = newFs
+	if res.defaultFs == nil {
+		res.defaultFs = afero.NewOsFs()
+	}
+	res.fsMap = cmap.New[afero.Fs]()
 
 	res.OnStandardCallback = callbacks.OnStandard
 	res.OnArchiveCallback = callbacks.OnArchive
@@ -344,12 +346,13 @@ func (w *FileWatcher) watchFileChangeEvents() {
 		case <-delayChan:
 			// special create event handling
 			if onlyCreateEvent {
-				fileInfo, err := os.Stat(eventsList[0].Name)
+				currentFs := w.getFsForPath(eventsList[0].Name)
+				fileInfo, err := currentFs.Stat(eventsList[0].Name)
 				if os.IsNotExist(err) {
 					logger.Error("File is missing", "path", eventsList[0].Name)
 				}
 
-				if fileInfo.IsDir() {
+				if fileInfo != nil && fileInfo.IsDir() {
 					e.Event = e.CreateFolderEvent()
 					if t, ok := w.getFileType(e.Path); ok && t == LowLatency {
 						_ = w.addLowLatencyRecursive(e.Path)
@@ -425,23 +428,23 @@ func (w *FileWatcher) sendEvent(e FileWatcherEvent) {
 }
 
 // AddStandardFile starts watching a file or directory as a Standard file type.
-func (w *FileWatcher) AddStandardFile(path string) error {
-	return w.addWithType(path, Standard)
+func (w *FileWatcher) AddStandardFile(path string, fs afero.Fs) error {
+	return w.addWithType(path, Standard, fs)
 }
 
 // AddArchiveFile starts watching a file or directory as an Archive file type.
-func (w *FileWatcher) AddArchiveFile(path string) error {
-	return w.addWithType(path, Archive)
+func (w *FileWatcher) AddArchiveFile(path string, fs afero.Fs) error {
+	return w.addWithType(path, Archive, fs)
 }
 
 // AddLowLatencyFile starts watching a file or directory as a LowLatency file type.
-func (w *FileWatcher) AddLowLatencyFile(path string) error {
-	return w.addWithType(path, LowLatency)
+func (w *FileWatcher) AddLowLatencyFile(path string, fs afero.Fs) error {
+	return w.addWithType(path, LowLatency, fs)
 }
 
 // AddStreamingFile starts watching a file or directory as a Streaming file type.
-func (w *FileWatcher) AddStreamingFile(path string) error {
-	return w.addWithType(path, Streaming)
+func (w *FileWatcher) AddStreamingFile(path string, fs afero.Fs) error {
+	return w.addWithType(path, Streaming, fs)
 }
 
 // ConvertToFileType updates the tracked file type for a given path.
@@ -451,14 +454,20 @@ func (w *FileWatcher) ConvertToFileType(path string, newType FileType) error {
 	return nil
 }
 
-func (w *FileWatcher) addWithType(path string, fileType FileType) error {
+func (w *FileWatcher) addWithType(path string, fileType FileType, customFs afero.Fs) error {
+	useFs := customFs
+	if useFs == nil {
+		useFs = afero.NewOsFs()
+	}
+
 	if !w.Contains(path) {
-		fileInfo, err := fs.Stat(path)
+		fileInfo, err := useFs.Stat(path)
 
 		if os.IsNotExist(err) {
 			return err
 		}
 
+		w.fsMap.Set(path, useFs)
 		w.addToMap(path, fileType)
 
 		if fileType == Archive {
@@ -472,6 +481,11 @@ func (w *FileWatcher) addWithType(path string, fileType FileType) error {
 		if fileType == Streaming {
 			w.initStreaming(path)
 			return nil
+		}
+
+		// If we are here, we are using fsnotify (LowLatency or other fallthrough)
+		if customFs != nil {
+			return fmt.Errorf("fsnotify only uses operating system events and cannot be used with afero")
 		}
 
 		if fileInfo.IsDir() {
@@ -492,8 +506,8 @@ func (w *FileWatcher) addWithType(path string, fileType FileType) error {
 	return nil
 }
 
-func (w *FileWatcher) Add(path string) error {
-	return w.AddStandardFile(path)
+func (w *FileWatcher) Add(path string, fs afero.Fs) error {
+	return w.AddStandardFile(path, fs)
 }
 
 func (w *FileWatcher) Remove(path string) error {
@@ -580,6 +594,21 @@ func (w *FileWatcher) removeFromMap(path string, t FileType) {
 	case Streaming:
 		w.streamingWatchesMap.Remove(path)
 	}
+}
+
+func (w *FileWatcher) getFsForPath(path string) afero.Fs {
+	current := path
+	for {
+		if f, ok := w.fsMap.Get(current); ok {
+			return f
+		}
+		parent := filepath.Dir(current)
+		if parent == current || parent == "" || parent == "." {
+			break
+		}
+		current = parent
+	}
+	return w.defaultFs
 }
 
 func (w *FileWatcher) removeFromAllMaps(path string) {

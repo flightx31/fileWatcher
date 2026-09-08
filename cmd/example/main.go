@@ -65,10 +65,10 @@ func main() {
 	// 4. Add paths to the watcher with their specific types.
 	// NOTE: Callbacks should be registered BEFORE adding files if you want to catch initial setup events.
 	fmt.Println("Registering paths with different types...")
-	_ = w.AddStandardFile(stdPath)
-	_ = w.AddArchiveFile(arcPath)
-	_ = w.AddLowLatencyFile(llDir)
-	_ = w.AddStreamingFile(strPath)
+	_ = w.AddStandardFile(stdPath, nil)
+	_ = w.AddArchiveFile(arcPath, nil)
+	_ = w.AddLowLatencyFile(llDir, nil)
+	_ = w.AddStreamingFile(strPath, nil)
 
 	// Speed up polling for the demo.
 	w.SetStandardPollingInterval(2 * time.Second)

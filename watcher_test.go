@@ -148,7 +148,7 @@ func TestFileWatcher_ArchivePolling(t *testing.T) {
 		}
 	}
 
-	err = w.AddArchiveFile(testPath)
+	err = w.AddArchiveFile(testPath, fs)
 	if err != nil {
 		t.Fatalf("AddArchiveFile failed: %v", err)
 	}
@@ -191,7 +191,7 @@ func TestFileWatcher_StandardPolling(t *testing.T) {
 		}
 	}
 
-	err = w.AddStandardFile(testPath)
+	err = w.AddStandardFile(testPath, fs)
 	if err != nil {
 		t.Fatalf("AddStandardFile failed: %v", err)
 	}
@@ -250,7 +250,7 @@ func TestFileWatcher_StreamingData(t *testing.T) {
 		}
 	}
 
-	err = w.AddStreamingFile(testPath)
+	err = w.AddStreamingFile(testPath, fs)
 	if err != nil {
 		t.Fatalf("AddStreamingFile failed: %v", err)
 	}

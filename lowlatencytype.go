@@ -8,7 +8,8 @@ import (
 
 // addLowLatencyRecursive walks the directory and adds all subdirectories to the fsnotify watcher.
 func (w *FileWatcher) addLowLatencyRecursive(path string) error {
-	return afero.Walk(fs, path, func(subPath string, info os.FileInfo, err error) error {
+	currentFs := w.getFsForPath(path)
+	return afero.Walk(currentFs, path, func(subPath string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
