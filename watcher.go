@@ -266,7 +266,7 @@ func (w *FileWatcher) watchFileChangeEvents() {
 			}
 
 			if event.Has(fsnotify.Chmod) {
-				// send chmod events along down the chain right away
+				// send chmod events right away
 				e.Event = e.ChModEvent()
 				e.Path = event.Name
 				w.sendEvent(e)
@@ -274,6 +274,7 @@ func (w *FileWatcher) watchFileChangeEvents() {
 			}
 
 			if event.Has(fsnotify.Write) {
+				// send edit events right away
 				e.Event = e.EditFileEvent()
 				e.Path = event.Name
 				e.PreviousPath = ""
@@ -354,11 +355,15 @@ func (w *FileWatcher) watchFileChangeEvents() {
 
 				if fileInfo != nil && fileInfo.IsDir() {
 					e.Event = e.CreateFolderEvent()
-					if t, ok := w.getFileType(e.Path); ok && t == LowLatency {
-						_ = w.addLowLatencyRecursive(e.Path)
+					if t, ok := w.getFileType(eventsList[0].Name); ok && t == LowLatency {
+						_ = w.addLowLatencyRecursive(eventsList[0].Name)
 					}
 				} else {
-					e.Event = e.CreateFileEvent()
+					if w.Contains(eventsList[0].Name) {
+						e.Event = e.EditFileEvent()
+					} else {
+						e.Event = e.CreateFileEvent()
+					}
 				}
 
 				e.Path = eventsList[0].Name
@@ -423,6 +428,8 @@ func (w *FileWatcher) sendEvent(e FileWatcherEvent) {
 			w.addToMap(e.Path, t)
 		} else if e.IsDeleteFileEvent() || e.IsDeleteFolderEvent() {
 			w.removeFromMap(e.Path, t)
+		} else if e.IsCreateFileEvent() || e.IsCreateFolderEvent() {
+			w.addToMap(e.Path, t)
 		}
 	}
 }
@@ -484,7 +491,7 @@ func (w *FileWatcher) addWithType(path string, fileType FileType, customFs afero
 		}
 
 		// If we are here, we are using fsnotify (LowLatency or other fallthrough)
-		if customFs != nil {
+		if customFs != nil && useFs != afero.NewOsFs() {
 			return fmt.Errorf("fsnotify only uses operating system events and cannot be used with afero")
 		}
 

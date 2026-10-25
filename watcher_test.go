@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/afero"
 )
 
@@ -293,5 +294,144 @@ func TestFileWatcher_StreamingData(t *testing.T) {
 	// and we could verify it, but here it's enough to check if it's removed from maps.
 	if w.Contains(testPath) {
 		t.Error("File still exists in maps after removal")
+	}
+}
+
+func TestFileWatcher_CreateEventOnTrackedFileEmitsEdit(t *testing.T) {
+	fs := afero.NewMemMapFs()
+	w, err := Init(fs, testLogger, WatcherCallbacks{})
+	if err != nil {
+		t.Fatalf("Failed to init: %v", err)
+	}
+	defer w.Close()
+
+	dirPath := "/tmp/watch-dir"
+	filePath := "/tmp/watch-dir/tracked.txt"
+	_ = afero.WriteFile(fs, filePath, []byte("initial data"), 0644)
+
+	w.lowLatencyWatchesMap.Set(dirPath, LowLatency)
+	w.lowLatencyWatchesMap.Set(filePath, LowLatency)
+
+	eventChan := make(chan FileWatcherEvent, 1)
+	w.OnLowLatencyCallback = func(e FileWatcherEvent) {
+		eventChan <- e
+	}
+
+	// Send fsnotify.Create for an already tracked file (simulates macOS atomic save)
+	w.fsNotify.Events <- fsnotify.Event{
+		Name: filePath,
+		Op:   fsnotify.Create,
+	}
+
+	select {
+	case event := <-eventChan:
+		if event.Path != filePath {
+			t.Errorf("Expected event path %s, got %s", filePath, event.Path)
+		}
+		if !event.IsEditFileEvent() {
+			t.Errorf("Expected EDIT_FILE event for tracked file, got %s", event.Event)
+		}
+	case <-time.After(1 * time.Second):
+		t.Fatal("Timed out waiting for file event")
+	}
+}
+
+func TestFileWatcher_CreateEventOnUntrackedFileEmitsCreateAndTracks(t *testing.T) {
+	fs := afero.NewMemMapFs()
+	w, err := Init(fs, testLogger, WatcherCallbacks{})
+	if err != nil {
+		t.Fatalf("Failed to init: %v", err)
+	}
+	defer w.Close()
+
+	dirPath := "/tmp/watch-dir"
+	filePath := "/tmp/watch-dir/new_file.txt"
+	_ = afero.WriteFile(fs, filePath, []byte("brand new file"), 0644)
+
+	w.lowLatencyWatchesMap.Set(dirPath, LowLatency)
+
+	if w.Contains(filePath) {
+		t.Fatal("Expected filePath to not be tracked initially")
+	}
+
+	eventChan := make(chan FileWatcherEvent, 1)
+	w.OnLowLatencyCallback = func(e FileWatcherEvent) {
+		eventChan <- e
+	}
+
+	// 1. First create event on untracked file
+	w.fsNotify.Events <- fsnotify.Event{
+		Name: filePath,
+		Op:   fsnotify.Create,
+	}
+
+	select {
+	case event := <-eventChan:
+		if event.Path != filePath {
+			t.Errorf("Expected event path %s, got %s", filePath, event.Path)
+		}
+		if !event.IsCreateFileEvent() {
+			t.Errorf("Expected CREATE_FILE event for untracked file, got %s", event.Event)
+		}
+	case <-time.After(1 * time.Second):
+		t.Fatal("Timed out waiting for first CREATE_FILE event")
+	}
+
+	// Verify that the newly created file is now tracked
+	if !w.Contains(filePath) {
+		t.Errorf("Expected %s to be tracked after CREATE_FILE event", filePath)
+	}
+
+	// 2. Second create event on the now-tracked file should emit EDIT_FILE
+	w.fsNotify.Events <- fsnotify.Event{
+		Name: filePath,
+		Op:   fsnotify.Create,
+	}
+
+	select {
+	case event := <-eventChan:
+		if event.Path != filePath {
+			t.Errorf("Expected event path %s, got %s", filePath, event.Path)
+		}
+		if !event.IsEditFileEvent() {
+			t.Errorf("Expected EDIT_FILE event for subsequent save on tracked file, got %s", event.Event)
+		}
+	case <-time.After(1 * time.Second):
+		t.Fatal("Timed out waiting for second EDIT_FILE event")
+	}
+}
+
+func TestFileWatcher_SendEvent_CreateTracksFileAndFolder(t *testing.T) {
+	fs := afero.NewMemMapFs()
+	w, err := Init(fs, testLogger, WatcherCallbacks{})
+	if err != nil {
+		t.Fatalf("Failed to init: %v", err)
+	}
+	defer w.Close()
+
+	dirPath := "/tmp/watch-dir"
+	w.lowLatencyWatchesMap.Set(dirPath, LowLatency)
+
+	newFilePath := "/tmp/watch-dir/created.txt"
+	w.sendEvent(FileWatcherEvent{
+		Path:  newFilePath,
+		Event: "CREATE_FILE",
+	})
+
+	if !w.Contains(newFilePath) {
+		t.Errorf("Expected %s to be tracked after sendEvent CREATE_FILE", newFilePath)
+	}
+	if ft, ok := w.GetFileType(newFilePath); !ok || ft != LowLatency {
+		t.Errorf("Expected file type LowLatency for %s, got %v (ok=%v)", newFilePath, ft, ok)
+	}
+
+	newSubdir := "/tmp/watch-dir/subdir"
+	w.sendEvent(FileWatcherEvent{
+		Path:  newSubdir,
+		Event: "CREATE_FOLDER",
+	})
+
+	if !w.Contains(newSubdir) {
+		t.Errorf("Expected %s to be tracked after sendEvent CREATE_FOLDER", newSubdir)
 	}
 }
